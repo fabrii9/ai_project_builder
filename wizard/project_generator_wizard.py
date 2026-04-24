@@ -251,6 +251,15 @@ class AiProjectWizard(models.TransientModel):
             except requests.exceptions.HTTPError as e:
                 status = e.response.status_code if e.response else 0
                 body = e.response.text[:300] if e.response else str(e)
+                # Cuando e.response es None, extraer el código del mensaje de excepción
+                if status == 0:
+                    err_str = str(e)
+                    if '429' in err_str:
+                        status = 429
+                    elif '401' in err_str:
+                        status = 401
+                    elif any(c in err_str for c in ('500', '502', '503', '504')):
+                        status = 500
                 if status == 401:
                     raise UserError(
                         _('API Key inválida o sin permisos (HTTP 401). '
