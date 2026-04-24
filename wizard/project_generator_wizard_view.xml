@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================
+         Vista Formulario — ai.project.wizard
+         Estado DRAFT: ingresar instrucciones
+    ============================================================ -->
+    <record id="view_ai_project_wizard_form" model="ir.ui.view">
+        <field name="name">ai.project.wizard.form</field>
+        <field name="model">ai.project.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Generador de Proyectos con IA">
+
+                <!-- Indicador de pasos -->
+                <div class="alert alert-info" role="alert" invisible="state != 'draft'">
+                    <strong>Paso 1 de 2</strong> — Describe el proyecto que deseas crear.
+                </div>
+                <div class="alert alert-warning" role="alert" invisible="state != 'preview'">
+                    <strong>Paso 2 de 2</strong> — Revisa el plan generado y confirma para crearlo en Odoo.
+                </div>
+                <div class="alert alert-success" role="alert" invisible="state != 'done'">
+                    <strong>¡Listo!</strong> El proyecto fue creado exitosamente en Odoo.
+                </div>
+                <div class="alert alert-danger" role="alert" invisible="state != 'error'">
+                    <strong>Error</strong> — Se produjo un problema al generar el proyecto.
+                </div>
+
+                <sheet>
+                    <!-- ==================== ESTADO: DRAFT ==================== -->
+                    <group invisible="state not in ('draft', 'preview')">
+                        <group string="Configuración">
+                            <field name="config_id"
+                                   readonly="state != 'draft'"
+                                   options="{'no_open': True}"/>
+                        </group>
+                    </group>
+
+                    <group invisible="state not in ('draft', 'preview')">
+                        <group string="Descripción del Proyecto" colspan="2">
+                            <field name="instructions"
+                                   nolabel="1"
+                                   placeholder="Describe el proyecto que deseas crear: objetivos, alcance, tecnologías, equipo, plazos, entregables esperados...&#10;&#10;Ejemplo: Quiero crear un sistema de e-commerce con tienda online, gestión de inventario y pasarela de pagos. El equipo es de 4 personas. El plazo es 3 meses."
+                                   readonly="state != 'draft'"
+                                   style="min-height: 150px;"/>
+                        </group>
+                    </group>
+
+                    <!-- ==================== ESTADO: PREVIEW ==================== -->
+                    <group invisible="state != 'preview'">
+                        <group string="Plan de Proyecto Generado" colspan="2">
+                            <field name="preview_summary"
+                                   nolabel="1"
+                                   widget="html"/>
+                        </group>
+                    </group>
+
+                    <!-- ==================== ESTADO: DONE ==================== -->
+                    <group invisible="state != 'done'">
+                        <group string="Proyecto Creado">
+                            <field name="project_id" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="result_summary"
+                                   nolabel="1"
+                                   widget="html"
+                                   readonly="1"/>
+                        </group>
+                    </group>
+
+                    <!-- ==================== ESTADO: ERROR ==================== -->
+                    <group invisible="state != 'error'">
+                        <group string="Detalle del Error" colspan="2">
+                            <field name="error_message"
+                                   nolabel="1"
+                                   readonly="1"
+                                   style="color: #d9534f;"/>
+                        </group>
+                    </group>
+
+                    <!-- Campos ocultos de control -->
+                    <field name="state" invisible="1"/>
+                    <field name="preview_json" invisible="1"/>
+                </sheet>
+
+                <footer>
+                    <!-- Botones estado DRAFT -->
+                    <button name="action_generate_preview"
+                            string="🤖 Generar Plan con IA"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'draft'"/>
+
+                    <!-- Botones estado PREVIEW -->
+                    <button name="action_confirm_create"
+                            string="✅ Confirmar y Crear Proyecto"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'preview'"/>
+                    <button name="action_reset"
+                            string="⬅ Volver a editar"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state != 'preview'"/>
+
+                    <!-- Botones estado DONE -->
+                    <button name="action_open_project"
+                            string="📂 Abrir Proyecto"
+                            type="object"
+                            class="btn-primary"
+                            invisible="state != 'done'"/>
+                    <button name="action_reset"
+                            string="➕ Crear Otro Proyecto"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state != 'done'"/>
+
+                    <!-- Botones estado ERROR -->
+                    <button name="action_reset"
+                            string="🔄 Reintentar"
+                            type="object"
+                            class="btn-secondary"
+                            invisible="state != 'error'"/>
+
+                    <button string="Cerrar"
+                            class="btn-secondary"
+                            special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============================================================
+         Acción de ventana — ai.project.wizard
+    ============================================================ -->
+    <record id="action_ai_project_wizard" model="ir.actions.act_window">
+        <field name="name">Generador de Proyectos IA</field>
+        <field name="res_model">ai.project.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="context">{}</field>
+    </record>
+
+</odoo>

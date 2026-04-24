@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================
+         Vista Lista — ai.project.config
+    ============================================================ -->
+    <record id="view_ai_project_config_list" model="ir.ui.view">
+        <field name="name">ai.project.config.list</field>
+        <field name="model">ai.project.config</field>
+        <field name="arch" type="xml">
+            <list string="Configuraciones OpenAI">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="model_name"/>
+                <field name="temperature"/>
+                <field name="max_tokens"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ============================================================
+         Vista Formulario — ai.project.config
+    ============================================================ -->
+    <record id="view_ai_project_config_form" model="ir.ui.view">
+        <field name="name">ai.project.config.form</field>
+        <field name="model">ai.project.config</field>
+        <field name="arch" type="xml">
+            <form string="Configuración OpenAI">
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Nombre de la configuración"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Conexión OpenAI">
+                            <field name="api_key"
+                                   password="True"
+                                   placeholder="sk-..."/>
+                            <field name="model_name"/>
+                            <field name="endpoint"
+                                   placeholder="https://api.openai.com/v1 (dejar vacío para default)"/>
+                        </group>
+                        <group string="Parámetros del Modelo">
+                            <field name="temperature"/>
+                            <field name="max_tokens"/>
+                            <field name="sequence"/>
+                            <field name="active"/>
+                        </group>
+                    </group>
+                    <group string="Notas">
+                        <field name="notes" nolabel="1"/>
+                    </group>
+                </sheet>
+                <footer>
+                    <button name="action_test_connection"
+                            string="🔌 Probar Conexión"
+                            type="object"
+                            class="btn-secondary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ============================================================
+         Acción de ventana — ai.project.config
+    ============================================================ -->
+    <record id="action_ai_project_config" model="ir.actions.act_window">
+        <field name="name">Configuraciones OpenAI</field>
+        <field name="res_model">ai.project.config</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Crea tu primera configuración de OpenAI
+            </p>
+            <p>
+                Define la API Key, el modelo y los parámetros para que el
+                generador de proyectos pueda conectarse a OpenAI.
+            </p>
+        </field>
+    </record>
+
+</odoo>
