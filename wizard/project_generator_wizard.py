@@ -98,6 +98,28 @@ class AiProjectWizard(models.TransientModel):
              'objetivos, alcance, tecnologías, equipo, plazos, etc.',
     )
 
+    # --- Proyecto destino ---
+    project_mode = fields.Selection(
+        selection=[
+            ('new', 'Crear proyecto nuevo'),
+            ('existing', 'Usar proyecto existente'),
+        ],
+        string='Proyecto',
+        default='new',
+        required=True,
+        help='Elige si generar un proyecto nuevo o agregar etapas y tareas a uno existente.',
+    )
+    project_name = fields.Char(
+        string='Nombre del Proyecto',
+        help='Nombre personalizado para el proyecto nuevo. '
+             'Si se deja vacío, se usa el nombre sugerido por la IA.',
+    )
+    existing_project_id = fields.Many2one(
+        comodel_name='project.project',
+        string='Proyecto Existente',
+        help='Las etapas y tareas se agregarán a este proyecto.',
+    )
+
     # --- Preview (JSON recibido) ---
     preview_json = fields.Text(
         string='Respuesta IA (JSON)',
@@ -196,6 +218,8 @@ class AiProjectWizard(models.TransientModel):
             'project_id': False,
             'result_summary': False,
             'error_message': False,
+            'project_name': False,
+            'existing_project_id': False,
         })
         return self._reopen_wizard()
 
@@ -357,22 +381,30 @@ class AiProjectWizard(models.TransientModel):
 
     def _create_project_records(self, data):
         """
-        Crea project.project, project.task.type y project.task en Odoo.
+        Crea o reutiliza project.project, y crea project.task.type y project.task.
 
         :param data: dict — datos validados con 'project', 'stages', 'tasks'
         :return: project.project record
         """
-        ProjectModel = self.env['project.project']
         StageModel = self.env['project.task.type']
         TaskModel = self.env['project.task']
 
-        # 1. Crear proyecto
+        # 1. Resolver proyecto destino
         project_data = data['project']
-        project = ProjectModel.create({
-            'name': project_data['name'],
-            'description': project_data.get('description', ''),
-        })
-        _logger.info('[AI Project Builder] Proyecto creado: id=%d name=%s', project.id, project.name)
+        if self.project_mode == 'existing' and self.existing_project_id:
+            project = self.existing_project_id
+            _logger.info(
+                '[AI Project Builder] Usando proyecto existente: id=%d name=%s',
+                project.id, project.name,
+            )
+        else:
+            # Nombre: override manual > sugerido por IA
+            name = (self.project_name or '').strip() or project_data['name']
+            project = self.env['project.project'].create({
+                'name': name,
+                'description': project_data.get('description', ''),
+            })
+            _logger.info('[AI Project Builder] Proyecto creado: id=%d name=%s', project.id, project.name)
 
         # 2. Crear etapas y mapear nombre → record
         stage_map = {}

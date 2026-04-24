@@ -33,6 +33,19 @@
                                    readonly="state != 'draft'"
                                    options="{'no_open': True}"/>
                         </group>
+                        <group string="Proyecto Destino">
+                            <field name="project_mode"
+                                   widget="radio"
+                                   readonly="state != 'draft'"/>
+                            <field name="project_name"
+                                   placeholder="Dejar vacío para usar el nombre sugerido por la IA"
+                                   readonly="state != 'draft'"
+                                   invisible="project_mode != 'new'"/>
+                            <field name="existing_project_id"
+                                   readonly="state != 'draft'"
+                                   invisible="project_mode != 'existing'"
+                                   options="{'no_open': True}"/>
+                        </group>
                     </group>
 
                     <group invisible="state not in ('draft', 'preview')">
