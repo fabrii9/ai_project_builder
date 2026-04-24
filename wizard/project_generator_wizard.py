@@ -24,8 +24,9 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
-MAX_RETRIES = 3
-RETRY_DELAY = 2  # segundos base para backoff
+MAX_RETRIES = 4
+RETRY_DELAY = 20   # segundos base para 429 (rate limit)
+SERVER_RETRY_DELAY = 3  # segundos base para errores 5xx
 
 # ---------------------------------------------------------------------------
 # Prompt del sistema — instrucciones para OpenAI
@@ -290,9 +291,21 @@ class AiProjectWizard(models.TransientModel):
                           'Verifique la configuración OpenAI.')
                     )
                 if status == 429:
-                    wait = RETRY_DELAY * attempt
+                    # Respetar Retry-After si OpenAI lo devuelve, si no usar backoff exponencial
+                    retry_after = None
+                    if e.response is not None:
+                        retry_after = e.response.headers.get('Retry-After')
+                    if retry_after:
+                        try:
+                            wait = float(retry_after)
+                        except (ValueError, TypeError):
+                            wait = RETRY_DELAY * (2 ** (attempt - 1))
+                    else:
+                        wait = RETRY_DELAY * (2 ** (attempt - 1))  # 20, 40, 80, 160...
+                    wait = min(wait, 120)  # cap en 2 minutos
                     _logger.warning(
-                        '[AI Project Builder] Rate limit OpenAI. Reintentando en %ss', wait
+                        '[AI Project Builder] Rate limit OpenAI. Reintentando en %ss (intento %d/%d)',
+                        wait, attempt, MAX_RETRIES,
                     )
                     time.sleep(wait)
                     last_error = UserError(
@@ -300,9 +313,9 @@ class AiProjectWizard(models.TransientModel):
                     )
                     continue
                 if status >= 500:
-                    wait = RETRY_DELAY * attempt
+                    wait = SERVER_RETRY_DELAY * (2 ** (attempt - 1))  # 3, 6, 12, 24...
                     _logger.warning(
-                        '[AI Project Builder] Error servidor OpenAI %d. Reintentando...', status
+                        '[AI Project Builder] Error servidor OpenAI %d. Reintentando en %ss...', status, wait
                     )
                     time.sleep(wait)
                     last_error = UserError(_('Error en los servidores de OpenAI (HTTP %s).') % status)
