@@ -24,9 +24,8 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
-MAX_RETRIES = 4
-RETRY_DELAY = 20   # segundos base para 429 (rate limit)
-SERVER_RETRY_DELAY = 3  # segundos base para errores 5xx
+MAX_RETRIES = 3          # solo se usa para errores 5xx
+SERVER_RETRY_DELAY = 3   # segundos base para backoff en errores 5xx
 
 # ---------------------------------------------------------------------------
 # Prompt del sistema — instrucciones para OpenAI
@@ -291,27 +290,29 @@ class AiProjectWizard(models.TransientModel):
                           'Verifique la configuración OpenAI.')
                     )
                 if status == 429:
-                    # Respetar Retry-After si OpenAI lo devuelve, si no usar backoff exponencial
+                    # No reintentamos: dormir un worker de Odoo durante segundos/minutos
+                    # bloquea el thread HTTP. El usuario debe esperar y reintentar manualmente.
                     retry_after = None
                     if e.response is not None:
                         retry_after = e.response.headers.get('Retry-After')
+                    hint = ''
                     if retry_after:
-                        try:
-                            wait = float(retry_after)
-                        except (ValueError, TypeError):
-                            wait = RETRY_DELAY * (2 ** (attempt - 1))
-                    else:
-                        wait = RETRY_DELAY * (2 ** (attempt - 1))  # 20, 40, 80, 160...
-                    wait = min(wait, 120)  # cap en 2 minutos
+                        hint = _(' OpenAI sugiere esperar %s segundos.') % retry_after
                     _logger.warning(
-                        '[AI Project Builder] Rate limit OpenAI. Reintentando en %ss (intento %d/%d)',
-                        wait, attempt, MAX_RETRIES,
+                        '[AI Project Builder] Rate limit OpenAI (429). Retry-After=%s', retry_after
                     )
-                    time.sleep(wait)
-                    last_error = UserError(
-                        _('OpenAI rate limit alcanzado. Intente nuevamente en unos segundos.')
+                    raise UserError(
+                        _('Cuota de OpenAI agotada (HTTP 429).%s\n\n'
+                          'Posibles causas:\n'
+                          '• Límite de requests por minuto (RPM) alcanzado.\n'
+                          '• Límite de tokens por minuto (TPM) alcanzado.\n'
+                          '• Saldo insuficiente en la cuenta OpenAI.\n\n'
+                          'Soluciones:\n'
+                          '• Espera 1-2 minutos y vuelve a intentarlo.\n'
+                          '• Revisa tu uso en platform.openai.com/usage\n'
+                          '• Considera cambiar a un modelo más liviano (gpt-4o-mini).\n'
+                          '• Si el error persiste, verifica el saldo de tu cuenta.') % hint
                     )
-                    continue
                 if status >= 500:
                     wait = SERVER_RETRY_DELAY * (2 ** (attempt - 1))  # 3, 6, 12, 24...
                     _logger.warning(
