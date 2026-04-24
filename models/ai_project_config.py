@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-ai.project.config — Configuración de conexión a OpenAI para el generador de proyectos.
+ai.project.config — Configuración de conexión al proveedor LLM para el generador de proyectos.
 
-Almacena:
-- API Key de OpenAI
-- Modelo a utilizar (GPT-4o, GPT-4o-mini, etc.)
-- Temperatura y max_tokens
+Proveedores soportados:
+- OpenAI (GPT-4o, GPT-4o-mini, etc.)
+- Google Gemini (gemini-2.0-flash, gemini-1.5-pro, etc.)
 """
 
 import logging
@@ -23,12 +22,20 @@ OPENAI_MODELS = [
     ('gpt-3.5-turbo', 'GPT-3.5 Turbo'),
 ]
 
+GEMINI_MODELS = [
+    ('gemini-2.0-flash', 'Gemini 2.0 Flash'),
+    ('gemini-2.0-flash-lite', 'Gemini 2.0 Flash Lite'),
+    ('gemini-1.5-pro', 'Gemini 1.5 Pro'),
+    ('gemini-1.5-flash', 'Gemini 1.5 Flash'),
+]
+
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
+GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 
 
 class AiProjectConfig(models.Model):
     _name = 'ai.project.config'
-    _description = 'Configuración OpenAI — Generador de Proyectos'
+    _description = 'Configuración LLM — Generador de Proyectos'
     _order = 'sequence, name'
 
     # ------------------------------------------------------------------
@@ -42,20 +49,48 @@ class AiProjectConfig(models.Model):
     active = fields.Boolean(default=True)
 
     # ------------------------------------------------------------------
+    # Proveedor
+    # ------------------------------------------------------------------
+    provider = fields.Selection(
+        selection=[
+            ('openai', 'OpenAI'),
+            ('gemini', 'Google Gemini'),
+        ],
+        string='Proveedor',
+        required=True,
+        default='openai',
+    )
+
+    # ------------------------------------------------------------------
     # Conexión OpenAI
     # ------------------------------------------------------------------
     api_key = fields.Char(
-        string='API Key de OpenAI',
+        string='API Key',
         required=True,
-        help='Clave de API de OpenAI. Se almacena encriptada.',
+        help='API Key del proveedor seleccionado.',
     )
-    model_name = fields.Selection(
+    openai_model = fields.Selection(
         selection=OPENAI_MODELS,
-        string='Modelo',
-        required=True,
+        string='Modelo OpenAI',
         default='gpt-4o-mini',
-        help='Modelo de OpenAI a utilizar para generar el plan del proyecto.',
     )
+    openai_endpoint = fields.Char(
+        string='Endpoint OpenAI (opcional)',
+        help='URL base personalizada. Dejar vacío para usar https://api.openai.com/v1',
+    )
+
+    # ------------------------------------------------------------------
+    # Conexión Gemini
+    # ------------------------------------------------------------------
+    gemini_model = fields.Selection(
+        selection=GEMINI_MODELS,
+        string='Modelo Gemini',
+        default='gemini-2.0-flash',
+    )
+
+    # ------------------------------------------------------------------
+    # Parámetros comunes
+    # ------------------------------------------------------------------
     temperature = fields.Float(
         string='Temperatura',
         default=0.3,
@@ -67,15 +102,29 @@ class AiProjectConfig(models.Model):
         default=2048,
         help='Límite de tokens en la respuesta del modelo.',
     )
-    endpoint = fields.Char(
-        string='Endpoint (opcional)',
-        help='URL base personalizada. Dejar vacío para usar https://api.openai.com/v1',
+
+    # Campo calculado: nombre del modelo activo según proveedor
+    model_name = fields.Char(
+        string='Modelo activo',
+        compute='_compute_model_name',
+        store=False,
     )
 
     # ------------------------------------------------------------------
     # Notas
     # ------------------------------------------------------------------
     notes = fields.Text(string='Notas internas')
+
+    # ------------------------------------------------------------------
+    # Compute
+    # ------------------------------------------------------------------
+    @api.depends('provider', 'openai_model', 'gemini_model')
+    def _compute_model_name(self):
+        for rec in self:
+            if rec.provider == 'gemini':
+                rec.model_name = rec.gemini_model or ''
+            else:
+                rec.model_name = rec.openai_model or ''
 
     # ------------------------------------------------------------------
     # Constrains
@@ -93,19 +142,25 @@ class AiProjectConfig(models.Model):
                 raise ValidationError(_('El mínimo de tokens permitido es 256.'))
 
     # ------------------------------------------------------------------
-    # Acciones
+    # Acción: probar conexión
     # ------------------------------------------------------------------
     def action_test_connection(self):
-        """Prueba la conexión a OpenAI con un mensaje mínimo."""
+        """Prueba la conexión al proveedor con un mensaje mínimo."""
         self.ensure_one()
-        base_url = self.endpoint or OPENAI_BASE_URL
+        if self.provider == 'gemini':
+            self._test_gemini()
+        else:
+            self._test_openai()
+
+    def _test_openai(self):
+        base_url = self.openai_endpoint or OPENAI_BASE_URL
         url = f'{base_url}/chat/completions'
         headers = {
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
         }
         payload = {
-            'model': self.model_name,
+            'model': self.openai_model,
             'messages': [{'role': 'user', 'content': 'ping'}],
             'max_tokens': 5,
         }
@@ -113,7 +168,7 @@ class AiProjectConfig(models.Model):
             resp = requests.post(url, headers=headers, json=payload, timeout=(10, 30))
             resp.raise_for_status()
             raise UserError(
-                _('✅ Conexión exitosa con OpenAI (modelo: %s).') % self.model_name
+                _('✅ Conexión exitosa con OpenAI (modelo: %s).') % self.openai_model
             )
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response else 0
@@ -125,3 +180,29 @@ class AiProjectConfig(models.Model):
             raise UserError(_('❌ No se pudo conectar con OpenAI. Verificar red/endpoint.'))
         except requests.exceptions.Timeout:
             raise UserError(_('❌ Timeout al intentar conectar con OpenAI.'))
+
+    def _test_gemini(self):
+        model = self.gemini_model
+        url = f'{GEMINI_BASE_URL}/models/{model}:generateContent?key={self.api_key}'
+        payload = {
+            'contents': [{'parts': [{'text': 'ping'}]}],
+            'generationConfig': {'maxOutputTokens': 5},
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=(10, 30))
+            resp.raise_for_status()
+            raise UserError(
+                _('✅ Conexión exitosa con Google Gemini (modelo: %s).') % model
+            )
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response else 0
+            body = e.response.text if e.response else str(e)
+            if status == 400:
+                raise UserError(_('❌ API Key inválida o modelo no disponible (HTTP 400): %s') % body[:200])
+            if status == 403:
+                raise UserError(_('❌ Sin permisos para usar Gemini (HTTP 403).'))
+            raise UserError(_('❌ Error HTTP %s: %s') % (status, body[:200]))
+        except requests.exceptions.ConnectionError:
+            raise UserError(_('❌ No se pudo conectar con Google Gemini. Verificar red.'))
+        except requests.exceptions.Timeout:
+            raise UserError(_('❌ Timeout al intentar conectar con Google Gemini.'))

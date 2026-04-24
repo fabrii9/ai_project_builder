@@ -8,9 +8,10 @@
         <field name="name">ai.project.config.list</field>
         <field name="model">ai.project.config</field>
         <field name="arch" type="xml">
-            <list string="Configuraciones OpenAI">
+            <list string="Configuraciones LLM">
                 <field name="sequence" widget="handle"/>
                 <field name="name"/>
+                <field name="provider"/>
                 <field name="model_name"/>
                 <field name="temperature"/>
                 <field name="max_tokens"/>
@@ -26,7 +27,7 @@
         <field name="name">ai.project.config.form</field>
         <field name="model">ai.project.config</field>
         <field name="arch" type="xml">
-            <form string="Configuración OpenAI">
+            <form string="Configuración LLM">
                 <sheet>
                     <div class="oe_title">
                         <label for="name"/>
@@ -35,13 +36,8 @@
                         </h1>
                     </div>
                     <group>
-                        <group string="Conexión OpenAI">
-                            <field name="api_key"
-                                   password="True"
-                                   placeholder="sk-..."/>
-                            <field name="model_name"/>
-                            <field name="endpoint"
-                                   placeholder="https://api.openai.com/v1 (dejar vacío para default)"/>
+                        <group string="Proveedor">
+                            <field name="provider" widget="radio"/>
                         </group>
                         <group string="Parámetros del Modelo">
                             <field name="temperature"/>
@@ -49,6 +45,22 @@
                             <field name="sequence"/>
                             <field name="active"/>
                         </group>
+                    </group>
+                    <!-- OpenAI -->
+                    <group string="Conexión OpenAI" invisible="provider != 'openai'">
+                        <field name="api_key"
+                               password="True"
+                               placeholder="sk-..."/>
+                        <field name="openai_model"/>
+                        <field name="openai_endpoint"
+                               placeholder="https://api.openai.com/v1 (dejar vacío para default)"/>
+                    </group>
+                    <!-- Gemini -->
+                    <group string="Conexión Google Gemini" invisible="provider != 'gemini'">
+                        <field name="api_key"
+                               password="True"
+                               placeholder="AIza..."/>
+                        <field name="gemini_model"/>
                     </group>
                     <group string="Notas">
                         <field name="notes" nolabel="1"/>
@@ -68,16 +80,16 @@
          Acción de ventana — ai.project.config
     ============================================================ -->
     <record id="action_ai_project_config" model="ir.actions.act_window">
-        <field name="name">Configuraciones OpenAI</field>
+        <field name="name">Configuraciones LLM</field>
         <field name="res_model">ai.project.config</field>
         <field name="view_mode">list,form</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                Crea tu primera configuración de OpenAI
+                Crea tu primera configuración LLM
             </p>
             <p>
-                Define la API Key, el modelo y los parámetros para que el
-                generador de proyectos pueda conectarse a OpenAI.
+                Define el proveedor (OpenAI o Google Gemini), la API Key, el modelo
+                y los parámetros para generar proyectos con IA.
             </p>
         </field>
     </record>

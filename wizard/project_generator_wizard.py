@@ -4,8 +4,8 @@ ai.project.wizard — Wizard de generación de proyectos con IA.
 
 Flujo:
   1. El usuario ingresa instrucciones en lenguaje natural (state=draft).
-  2. Se llama a OpenAI con un prompt estructurado.
-  3. OpenAI devuelve JSON con project, stages y tasks.
+  2. Se llama al proveedor LLM configurado (OpenAI o Google Gemini).
+  3. El LLM devuelve JSON con project, stages y tasks.
   4. Se crea el proyecto en Odoo (state=done).
   5. Se muestra resumen y enlace al proyecto creado.
   En caso de error: state=error con mensaje descriptivo.
@@ -24,6 +24,7 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 OPENAI_BASE_URL = 'https://api.openai.com/v1'
+GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
 MAX_RETRIES = 3          # solo se usa para errores 5xx
 SERVER_RETRY_DELAY = 3   # segundos base para backoff en errores 5xx
 
@@ -87,9 +88,9 @@ class AiProjectWizard(models.TransientModel):
     # --- Entrada ---
     config_id = fields.Many2one(
         comodel_name='ai.project.config',
-        string='Configuración OpenAI',
+        string='Configuración IA',
         required=True,
-        help='Selecciona la configuración con la API Key y modelo a utilizar.',
+        help='Selecciona la configuración con el proveedor, API Key y modelo a utilizar.',
     )
     instructions = fields.Text(
         string='Instrucciones del Proyecto',
@@ -152,9 +153,9 @@ class AiProjectWizard(models.TransientModel):
     # ------------------------------------------------------------------
 
     def action_generate_preview(self):
-        """Llama a OpenAI y muestra la previsualización del plan sin crear nada."""
+        """Llama al LLM configurado y muestra la previsualización del plan sin crear nada."""
         self.ensure_one()
-        raw_json = self._call_openai()
+        raw_json = self._call_llm()
         data = self._parse_and_validate(raw_json)
 
         # Construir HTML de preview
@@ -224,8 +225,14 @@ class AiProjectWizard(models.TransientModel):
         return self._reopen_wizard()
 
     # ------------------------------------------------------------------
-    # Lógica interna: llamada a OpenAI
+    # Lógica interna: llamada al LLM
     # ------------------------------------------------------------------
+
+    def _call_llm(self):
+        """Despacha la llamada al proveedor configurado (OpenAI o Gemini)."""
+        if self.config_id.provider == 'gemini':
+            return self._call_gemini()
+        return self._call_openai()
 
     def _call_openai(self):
         """
@@ -235,7 +242,7 @@ class AiProjectWizard(models.TransientModel):
         :raises UserError: si ocurre un error de red, autenticación o API
         """
         config = self.config_id
-        base_url = config.endpoint or OPENAI_BASE_URL
+        base_url = config.openai_endpoint or OPENAI_BASE_URL
         url = f'{base_url}/chat/completions'
 
         headers = {
@@ -247,11 +254,10 @@ class AiProjectWizard(models.TransientModel):
             {'role': 'user', 'content': self.instructions},
         ]
         payload = {
-            'model': config.model_name,
+            'model': config.openai_model,
             'messages': messages,
             'temperature': config.temperature,
             'max_tokens': config.max_tokens,
-            # Pedir respuesta en JSON puro
             'response_format': {'type': 'json_object'},
         }
 
@@ -260,14 +266,14 @@ class AiProjectWizard(models.TransientModel):
             try:
                 _logger.info(
                     '[AI Project Builder] Llamando OpenAI — modelo=%s intento=%d',
-                    config.model_name, attempt,
+                    config.openai_model, attempt,
                 )
                 resp = requests.post(url, headers=headers, json=payload, timeout=(15, 90))
                 resp.raise_for_status()
                 data = resp.json()
                 content = data['choices'][0]['message']['content']
                 _logger.info(
-                    '[AI Project Builder] Respuesta recibida — tokens=%s',
+                    '[AI Project Builder] Respuesta OpenAI recibida — tokens=%s',
                     data.get('usage', {}).get('total_tokens', '?'),
                 )
                 return content
@@ -275,7 +281,6 @@ class AiProjectWizard(models.TransientModel):
             except requests.exceptions.HTTPError as e:
                 status = e.response.status_code if e.response else 0
                 body = e.response.text[:300] if e.response else str(e)
-                # Cuando e.response es None, extraer el código del mensaje de excepción
                 if status == 0:
                     err_str = str(e)
                     if '429' in err_str:
@@ -286,21 +291,15 @@ class AiProjectWizard(models.TransientModel):
                         status = 500
                 if status == 401:
                     raise UserError(
-                        _('API Key inválida o sin permisos (HTTP 401). '
-                          'Verifique la configuración OpenAI.')
+                        _('API Key de OpenAI inválida o sin permisos (HTTP 401). '
+                          'Verifique la configuración.')
                     )
                 if status == 429:
-                    # No reintentamos: dormir un worker de Odoo durante segundos/minutos
-                    # bloquea el thread HTTP. El usuario debe esperar y reintentar manualmente.
                     retry_after = None
                     if e.response is not None:
                         retry_after = e.response.headers.get('Retry-After')
-                    hint = ''
-                    if retry_after:
-                        hint = _(' OpenAI sugiere esperar %s segundos.') % retry_after
-                    _logger.warning(
-                        '[AI Project Builder] Rate limit OpenAI (429). Retry-After=%s', retry_after
-                    )
+                    hint = (_(' OpenAI sugiere esperar %s segundos.') % retry_after) if retry_after else ''
+                    _logger.warning('[AI Project Builder] Rate limit OpenAI (429). Retry-After=%s', retry_after)
                     raise UserError(
                         _('Cuota de OpenAI agotada (HTTP 429).%s\n\n'
                           'Posibles causas:\n'
@@ -310,30 +309,113 @@ class AiProjectWizard(models.TransientModel):
                           'Soluciones:\n'
                           '• Espera 1-2 minutos y vuelve a intentarlo.\n'
                           '• Revisa tu uso en platform.openai.com/usage\n'
-                          '• Considera cambiar a un modelo más liviano (gpt-4o-mini).\n'
+                          '• Considera usar Google Gemini como alternativa.\n'
                           '• Si el error persiste, verifica el saldo de tu cuenta.') % hint
                     )
                 if status >= 500:
-                    wait = SERVER_RETRY_DELAY * (2 ** (attempt - 1))  # 3, 6, 12, 24...
-                    _logger.warning(
-                        '[AI Project Builder] Error servidor OpenAI %d. Reintentando en %ss...', status, wait
-                    )
+                    wait = SERVER_RETRY_DELAY * (2 ** (attempt - 1))
+                    _logger.warning('[AI Project Builder] Error servidor OpenAI %d. Reintentando en %ss...', status, wait)
                     time.sleep(wait)
                     last_error = UserError(_('Error en los servidores de OpenAI (HTTP %s).') % status)
                     continue
                 raise UserError(_('Error HTTP %s al llamar a OpenAI: %s') % (status, body))
 
             except requests.exceptions.ConnectionError:
-                raise UserError(
-                    _('No se pudo conectar con OpenAI. Verifique la conexión a internet y el endpoint.')
-                )
+                raise UserError(_('No se pudo conectar con OpenAI. Verifique la conexión a internet y el endpoint.'))
             except requests.exceptions.Timeout:
-                last_error = UserError(
-                    _('Timeout al esperar respuesta de OpenAI. Intente nuevamente.')
-                )
+                last_error = UserError(_('Timeout al esperar respuesta de OpenAI. Intente nuevamente.'))
                 continue
 
         raise last_error or UserError(_('No se pudo obtener respuesta de OpenAI tras %d intentos.') % MAX_RETRIES)
+
+    def _call_gemini(self):
+        """
+        Envía las instrucciones a Google Gemini y devuelve el string JSON crudo.
+
+        :return: str — JSON crudo devuelto por Gemini
+        :raises UserError: si ocurre un error de red, autenticación o API
+        """
+        config = self.config_id
+        model = config.gemini_model
+        url = f'{GEMINI_BASE_URL}/models/{model}:generateContent?key={config.api_key}'
+
+        # Gemini usa generationConfig para forzar JSON
+        payload = {
+            'system_instruction': {
+                'parts': [{'text': SYSTEM_PROMPT}],
+            },
+            'contents': [
+                {'role': 'user', 'parts': [{'text': self.instructions}]},
+            ],
+            'generationConfig': {
+                'temperature': config.temperature,
+                'maxOutputTokens': config.max_tokens,
+                'responseMimeType': 'application/json',
+            },
+        }
+
+        last_error = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                _logger.info(
+                    '[AI Project Builder] Llamando Gemini — modelo=%s intento=%d',
+                    model, attempt,
+                )
+                resp = requests.post(url, json=payload, timeout=(15, 90))
+                resp.raise_for_status()
+                data = resp.json()
+                content = data['candidates'][0]['content']['parts'][0]['text']
+                _logger.info(
+                    '[AI Project Builder] Respuesta Gemini recibida — tokens=%s',
+                    data.get('usageMetadata', {}).get('totalTokenCount', '?'),
+                )
+                return content
+
+            except requests.exceptions.HTTPError as e:
+                status = e.response.status_code if e.response else 0
+                body = e.response.text[:300] if e.response else str(e)
+                if status == 0:
+                    err_str = str(e)
+                    if '429' in err_str:
+                        status = 429
+                    elif '403' in err_str or '401' in err_str:
+                        status = 403
+                    elif any(c in err_str for c in ('500', '502', '503', '504')):
+                        status = 500
+                if status in (401, 403):
+                    raise UserError(
+                        _('API Key de Gemini inválida o sin permisos (HTTP %s). '
+                          'Verifique la clave en aistudio.google.com.') % status
+                    )
+                if status == 429:
+                    _logger.warning('[AI Project Builder] Rate limit Gemini (429).')
+                    raise UserError(
+                        _('Cuota de Google Gemini agotada (HTTP 429).\n\n'
+                          'Soluciones:\n'
+                          '• Espera 1 minuto y vuelve a intentarlo.\n'
+                          '• Revisa tu cuota en aistudio.google.com\n'
+                          '• Considera cambiar a gemini-2.0-flash-lite (mayor cuota gratuita).')
+                    )
+                if status >= 500:
+                    wait = SERVER_RETRY_DELAY * (2 ** (attempt - 1))
+                    _logger.warning('[AI Project Builder] Error servidor Gemini %d. Reintentando en %ss...', status, wait)
+                    time.sleep(wait)
+                    last_error = UserError(_('Error en los servidores de Google Gemini (HTTP %s).') % status)
+                    continue
+                raise UserError(_('Error HTTP %s al llamar a Google Gemini: %s') % (status, body))
+
+            except (KeyError, IndexError) as e:
+                _logger.error('[AI Project Builder] Estructura de respuesta Gemini inesperada: %s', e)
+                raise UserError(
+                    _('Respuesta inesperada de Google Gemini. Intente nuevamente.')
+                )
+            except requests.exceptions.ConnectionError:
+                raise UserError(_('No se pudo conectar con Google Gemini. Verifique la conexión a internet.'))
+            except requests.exceptions.Timeout:
+                last_error = UserError(_('Timeout al esperar respuesta de Google Gemini. Intente nuevamente.'))
+                continue
+
+        raise last_error or UserError(_('No se pudo obtener respuesta de Google Gemini tras %d intentos.') % MAX_RETRIES)
 
     # ------------------------------------------------------------------
     # Lógica interna: parseo y validación del JSON

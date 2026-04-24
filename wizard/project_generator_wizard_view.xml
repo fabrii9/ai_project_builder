@@ -28,7 +28,7 @@
                 <sheet>
                     <!-- ==================== ESTADO: DRAFT ==================== -->
                     <group invisible="state not in ('draft', 'preview')">
-                        <group string="Configuración">
+                        <group string="Configuración IA">
                             <field name="config_id"
                                    readonly="state != 'draft'"
                                    options="{'no_open': True}"/>
